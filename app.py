@@ -10,8 +10,75 @@ import plotly.graph_objects as go
 
 import charts as C
 
-st.set_page_config(page_title="학업중단 생각 vs 실제 사유", page_icon="📊", layout="wide")
+st.set_page_config(page_title="학업중단 생각 vs 실제 사유", page_icon="📊", layout="wide",
+                   initial_sidebar_state="expanded")
 BASE = Path(__file__).parent
+
+st.html("""
+<style>
+    .app-fixed-header {
+        position: fixed;
+        z-index: 999990;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 80px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 0 100px 0 24px;
+        background: #fff;
+        border-bottom: 1px solid #e4e5e9;
+        color: #262730;
+        font-size: 20px;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .app-fixed-header .header-source {
+        margin-top: 5px;
+        font-size: 12px;
+        font-weight: 400;
+        color: #687080;
+    }
+    section[data-testid="stSidebar"] {
+        top: 80px !important;
+        height: calc(100vh - 80px) !important;
+        width: 300px !important;
+        min-width: 300px !important;
+        margin-left: 0 !important;
+        transform: none !important;
+        visibility: visible !important;
+    }
+    [data-testid="stSidebarCollapseButton"] { display: none !important; }
+    .stMainBlockContainer { padding-top: 100px; }
+    @media (max-width: 640px) {
+        .app-fixed-header { height: 100px; padding-left: 16px; padding-right: 16px; font-size: 15px; }
+        .app-fixed-header .header-source { font-size: 11px; }
+        [data-testid="stAppViewContainer"] {
+            flex-direction: column !important;
+            padding-top: 100px;
+        }
+        section[data-testid="stSidebar"] {
+            position: relative !important;
+            top: 0 !important;
+            width: 100% !important;
+            min-width: 100% !important;
+            height: 290px !important;
+            min-height: 290px !important;
+            z-index: 1 !important;
+        }
+        [data-testid="stSidebarHeader"],
+        [data-testid="stSidebarUserContent"] h1 { display: none !important; }
+        [data-testid="stMain"] { position: relative !important; top: auto !important; }
+        .stMainBlockContainer { padding-top: 24px !important; }
+    }
+</style>
+<div class="app-fixed-header">
+    <div>📊 학업중단, 생각과 실제는 어디까지 겹칠까?</div>
+    <div class="header-source">자료: 2025 '학업중단 생각 여부 및 이유'(초·중·고) / 2023 '학업 중단 사유' · 단위: % · 상관은 인과가 아님</div>
+</div>
+""")
 
 
 @st.cache_data
@@ -28,13 +95,7 @@ if "bookmarks" not in st.session_state:
     st.session_state.bookmarks = []
 
 if "selected_tab_idx" not in st.session_state:
-    st.session_state.selected_tab_idx = 0
-
-if "show_overview" not in st.session_state:
-    st.session_state.show_overview = False
-
-if "show_validation" not in st.session_state:
-    st.session_state.show_validation = False
+    st.session_state.selected_tab_idx = -1
 
 
 def add_bookmark(title, tab_idx):
@@ -53,18 +114,48 @@ def remove_bookmark(idx):
 
 st.sidebar.title("🧭 바로가기 & 탐색")
 
-# 1. 사이드바 핵심 질문 3개 바로가기 (클릭 시 세션 변수 변경 및 즉시 이동)
-st.sidebar.subheader("🎯 질문 바로가기")
-col_q1, col_q2, col_q3 = st.sidebar.columns(3)
-if col_q1.button("Q①", use_container_width=True, help="Q① '있다' 비율 분석"):
-    st.session_state.selected_tab_idx = 0
-    st.rerun()
-if col_q2.button("Q②", use_container_width=True, help="Q② 학교급별 이유 순위"):
-    st.session_state.selected_tab_idx = 1
-    st.rerun()
-if col_q3.button("Q③", use_container_width=True, help="Q③ 생각 vs 실제 사유"):
-    st.session_state.selected_tab_idx = 2
-    st.rerun()
+# 1. 연구 목차
+tab_titles = {
+    -1: "연구 개요 및 한계",
+    0: "Q1 '있다' 비율 분석",
+    1: "Q2 이유 순위 (범프 차트)",
+    2: "Q3 생각 vs 실제 사유",
+    3: "데이터 무결성 검증",
+}
+st.sidebar.subheader("목차")
+selected_tab = st.session_state.selected_tab_idx
+st.sidebar.markdown("""
+    <style>
+    section[data-testid="stSidebar"] div[class*="st-key-toc_"] button {
+        justify-content: flex-start !important;
+        border: 0;
+        padding: 0.35rem 0.75rem !important;
+        text-align: left !important;
+    }
+    section[data-testid="stSidebar"] div[class*="st-key-toc_"] button > div,
+    section[data-testid="stSidebar"] div[class*="st-key-toc_"] button p {
+        width: 100%;
+        text-align: left !important;
+        justify-content: flex-start !important;
+    }
+    section[data-testid="stSidebar"] div[class*="st-key-toc_"] button:hover {
+        color: #e34b4b;
+        background: rgba(227, 75, 75, 0.07);
+    }
+    section[data-testid="stSidebar"] div.st-key-toc_active button {
+        color: #d63333;
+        background: rgba(227, 75, 75, 0.1);
+        font-weight: 700;
+    }
+    </style>
+""", unsafe_allow_html=True)
+with st.sidebar.container(gap=None):
+    for tab_idx, title in tab_titles.items():
+        key = "toc_active" if tab_idx == selected_tab else f"toc_{tab_idx}"
+        st.button(
+            title, key=key, type="tertiary", use_container_width=True,
+            on_click=lambda idx=tab_idx: st.session_state.update(selected_tab_idx=idx),
+        )
 
 st.sidebar.divider()
 
@@ -76,24 +167,13 @@ else:
     for b_idx, b_item in enumerate(st.session_state.bookmarks):
         col_b1, col_b2 = st.sidebar.columns([4, 1])
         with col_b1:
-            if st.button(f"🔗 {b_item['title']}", key=f"nav_bm_{b_idx}", use_container_width=True):
-                st.session_state.selected_tab_idx = b_item["tab_idx"]
-                st.rerun()
+            st.button(
+                f"🔗 {b_item['title']}", key=f"nav_bm_{b_idx}", use_container_width=True,
+                on_click=lambda idx=b_item["tab_idx"]: st.session_state.update(selected_tab_idx=idx),
+            )
         with col_b2:
             if st.button("❌", key=f"del_bm_{b_idx}"):
                 remove_bookmark(b_idx)
-
-st.sidebar.divider()
-
-# 3. 사이드바 하단: 연구실 레퍼런스 (개요 & 검증 모달)
-st.sidebar.subheader("🚀 연구실 레퍼런스")
-if st.sidebar.button("📖 연구 개요 및 한계 보기", key="quick_overview", use_container_width=True):
-    st.session_state.show_overview = not st.session_state.show_overview
-    st.rerun()
-
-if st.sidebar.button("🔍 데이터 무결성 검증 보기", key="quick_validation", use_container_width=True):
-    st.session_state.show_validation = not st.session_state.show_validation
-    st.rerun()
 
 st.sidebar.divider()
 
@@ -141,54 +221,25 @@ st.sidebar.caption("⚠ 표본 크기·오차는 원자료에 없어 '유의하�
 
 # ------------------------------------------------------------------ 메인 화면 출력
 
-st.title("📊 학업중단, 생각과 실제는 어디까지 겹칠까?")
-st.caption("자료: 2025 '학업중단 생각 여부 및 이유'(초·중·고) / 2023 '학업 중단 사유' · 단위: % · 상관은 인과가 아님")
+if selected_tab == -1:
+    st.subheader("📖 연구 개요 및 한계")
+    st.markdown(
+        "- **Q①** 학업중단을 생각한 적 '있다'는 비율은 학교급·학업성적·경제적 수준에 따라 몇 %p 다른가?\n"
+        "- **Q②** 학업중단 생각 이유 1순위는 초·중·고에서 어떻게 달라지며, 고등학교에서 가장 높은 항목은?\n"
+        "- **Q③** 2023 실제 중단 사유와 2025 중단 생각 이유에서 대응되는 항목의 비율은 각각 얼마인가?")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.success("**말할 수 있는 것**\n\n- 2025 안에서 집단별 '있다' 비율의 차이(%p)\n- 학교급별 이유의 순위·비율 변화\n- 의미가 비슷한 항목의 순위·비중 방향")
+    with c2:
+        st.error("**말할 수 없는 것**\n\n- 2023과 2025의 단순 '증감'\n- 집단 차이의 '원인'(상관 ≠ 인과)\n- '생각한 학생이 그대로 중단한다'는 연결")
 
-# 사이드바 레퍼런스 클릭 시 토글 표시
-if st.session_state.show_overview:
-    with st.expander("📖 [연구실 레퍼런스] 연구 개요 및 한계", expanded=True):
-        if st.button("닫기 ❌", key="close_ov"):
-            st.session_state.show_overview = False
-            st.rerun()
-        st.markdown(
-            "- **Q①** 학업중단을 생각한 적 '있다'는 비율은 학교급·학업성적·경제적 수준에 따라 몇 %p 다른가?\n"
-            "- **Q②** 학업중단 생각 이유 1순위는 초·중·고에서 어떻게 달라지며, 고등학교에서 가장 높은 항목은?\n"
-            "- **Q③** 2023 실제 중단 사유와 2025 중단 생각 이유에서 대응되는 항목의 비율은 각각 얼마인가?")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.success("**말할 수 있는 것**\n\n- 2025 안에서 집단별 '있다' 비율의 차이(%p)\n- 학교급별 이유의 순위·비율 변화\n- 의미가 비슷한 항목의 순위·비중 방향")
-        with c2:
-            st.error("**말할 수 없는 것**\n\n- 2023과 2025의 단순 '증감'\n- 집단 차이의 '원인'(상관 ≠ 인과)\n- '생각한 학생이 그대로 중단한다'는 연결")
-
-if st.session_state.show_validation:
-    with st.expander("🔍 [연구실 레퍼런스] 데이터 무결성 검증", expanded=True):
-        if st.button("닫기 ❌", key="close_val"):
-            st.session_state.show_validation = False
-            st.rerun()
-        st.subheader("가공 데이터 및 합계 검증")
-        year = st.selectbox("조사연도 선택", sorted(df["조사연도"].unique()), key="val_year")
-        st.dataframe(df[df["조사연도"] == year], hide_index=True, use_container_width=True)
-        st.download_button("long.csv 내려받기", df.to_csv(index=False).encode("utf-8-sig"),
-                           file_name="long.csv", mime="text/csv")
-
-st.divider()
-
-# 메인 3대 질문 탭 (세션 상태와 라디오 동기화)
-tab_titles = ["① Q① '있다' 비율 분석", "② Q② 이유 순위 (범프 차트)", "③ Q③ 생각 vs 실제 사유"]
-
-selected_tab = st.radio(
-    "분석 질문 선택",
-    options=list(range(len(tab_titles))),
-    format_func=lambda x: tab_titles[x],
-    index=st.session_state.selected_tab_idx,
-    horizontal=True,
-    key="main_tab_radio"
-)
-
-# 세션 인덱스 업데이트
-st.session_state.selected_tab_idx = selected_tab
-
-st.divider()
+elif selected_tab == 3:
+    st.subheader("🔍 데이터 무결성 검증")
+    st.subheader("가공 데이터 및 합계 검증")
+    year = st.selectbox("조사연도 선택", sorted(df["조사연도"].unique()), key="val_year")
+    st.dataframe(df[df["조사연도"] == year], hide_index=True, use_container_width=True)
+    st.download_button("long.csv 내려받기", df.to_csv(index=False).encode("utf-8-sig"),
+                       file_name="long.csv", mime="text/csv")
 
 # ------------------------------------------------------------------ 탭 0: Q① '있다' 비율 분석
 if selected_tab == 0:
@@ -199,19 +250,6 @@ if selected_tab == 0:
         if st.button("⭐", key="bm_q1_top", help="이 섹션 북마크에 추가"):
             add_bookmark("Q① 생각 '있다' 비율 분석", 0)
 
-    with st.expander("⚙️ Q① 세부 비교 조건 설정 (클릭하여 열기)", expanded=True):
-        features = [f for f in df[(df["조사연도"] == 2025) & (df["구분"] == "생각여부")]["특성"].unique()
-                    if f != "전체"]
-        default_i = features.index("학업성적별") if "학업성적별" in features else 0
-        feature = st.selectbox("① 비교 특성 선택 (2025년 기준)", features, index=default_i)
-        
-        groups = list(C.yesno(df, feature)["집단"])
-        col_g1, col_g2 = st.columns(2)
-        with col_g1:
-            ga = st.selectbox("비교 집단 A", groups, index=0)
-        with col_g2:
-            gb = st.selectbox("비교 집단 B", groups, index=len(groups) - 1)
-
     c_g1, col_bm_g1 = st.columns([10, 1])
     with col_bm_g1:
         if st.button("⭐", key="bm_q1_c1", help="차트 북마크"):
@@ -219,21 +257,10 @@ if selected_tab == 0:
     with c_g1:
         st.plotly_chart(C.fig_q1_gap(df, excl), use_container_width=True)
 
-    c_g2, col_bm_g2 = st.columns([10, 1])
-    with col_bm_g2:
-        if st.button("⭐", key="bm_q1_c2", help="차트 북마크"):
-            add_bookmark("Q① 특성별 세부 바차트", 0)
-    with c_g2:
-        st.plotly_chart(C.fig_q1_bar(df, feature, excl), use_container_width=True)
-    
-    yesno_df = C.yesno(df, feature).set_index("집단")
-    if ga in yesno_df.index and gb in yesno_df.index:
-        va = float(yesno_df.loc[ga, "값"])
-        vb = float(yesno_df.loc[gb, "값"])
-        m1, m2, m3 = st.columns(3)
-        m1.metric(ga, "%.1f%%" % va)
-        m2.metric(gb, "%.1f%%" % vb)
-        m3.metric("A − B", "%+.1f%%p" % (va - vb))
+    st.subheader("특성별 집단 비교")
+    for feature in C.gap_table(df, excl)["특성"]:
+        st.plotly_chart(C.fig_q1_bar(df, feature, excl), use_container_width=True,
+                        key=f"q1_detail_{feature}")
 
 # ------------------------------------------------------------------ 탭 1: Q② 이유 순위 (범프 영역 y축 1위 상단 고정)
 elif selected_tab == 1:
@@ -244,22 +271,20 @@ elif selected_tab == 1:
         if st.button("⭐", key="bm_q2_top", help="이 섹션 북마크에 추가"):
             add_bookmark("Q② 학교급별 이유 순위", 1)
 
-    kind = st.radio("그래프 형식 선택", ["범프 영역 (순위+크기)", "범프 선 (순위만)"], horizontal=True)
-    etc = st.toggle("'기타' 포함", value=(kind != "범프 선 (순위만)"),
-                    help="'기타'는 이유가 아닌 묶음 항목이라 순위 비교에서는 빼는 편이 해석하기 좋습니다.")
-    
     c_q2_ch, c_bm_q2 = st.columns([10, 1])
     with c_bm_q2:
         if st.button("⭐", key="bm_q2_chart", help="차트 북마크"):
             add_bookmark("Q② 범프/영역 순위 차트", 1)
-            
+    kind = st.radio("그래프 형식 선택", ["범프 영역 (순위+크기)", "범프 선 (순위만)"], horizontal=True)
+    etc = st.toggle("'기타' 포함", value=(kind != "범프 선 (순위만)"),
+                    help="'기타'는 이유가 아닌 묶음 항목이라 순위 비교에서는 빼는 편이 해석하기 좋습니다.")
+    if kind.startswith("범프 영역"):
+        mode = st.radio("두께 기준 선택", ["전체 학생 중 환산(%)", "'있다' 응답자 중 비율(%)"], horizontal=True)
+
     with c_q2_ch:
         if kind.startswith("범프 영역"):
-            mode = st.radio("두께 기준 선택", ["전체 학생 중 환산(%)", "'있다' 응답자 중 비율(%)"], horizontal=True)
             md = "환산" if mode.startswith("전체") else "이유내"
             fig_q2 = C.fig_q2_area(df, md, etc)
-            # 순위가 높은(두꺼운 1위) 항목이 맨 위에 오도록 y축 반전
-            fig_q2.update_layout(yaxis=dict(autorange="reversed"))
             st.plotly_chart(fig_q2, use_container_width=True)
         else:
             fig_q2 = C.fig_q2_bump(df, etc)
@@ -286,58 +311,40 @@ elif selected_tab == 2:
         if st.button("⭐", key="bm_q3_top", help="이 섹션 북마크에 추가"):
             add_bookmark("Q③ 생각 vs 실제 비교 분석", 2)
 
-    c_q3_1, c_q3_2, c_q3_3 = st.columns([1.5, 1.5, 2])
-    with c_q3_1:
-        chart_type_q3 = st.selectbox("📊 시각화 유형 선택", ["덤벨 차트 (격차 비교)", "범프 영역 차트 (비중 흐름)"])
-    with c_q3_2:
-        sort_order = st.radio("⬇️ 정렬 기준", ["2025 생각 이유 내림차순", "2023 실제 사유 내림차순"], horizontal=True)
-    with c_q3_3:
-        tier = st.selectbox("대응 기준 선택", ["엄격", "기본", "완화"], index=1,
-                            help="엄격=문구가 사실상 같은 4개 / 기본=계획서의 5개 / 완화=교사 관련 항목까지 6개")
-
-    view = st.radio("표시 방식 선택", ["원자료 비율", "대응 항목 안 상대비중"], horizontal=True)
-
     c_q3_ch, c_bm_q3 = st.columns([10, 1])
-    with col_bm_q3:
+    with c_bm_q3:
         if st.button("⭐", key="bm_q3_chart", help="차트 북마크"):
             add_bookmark("Q③ 시각화 비교 차트", 2)
 
+    view = st.radio("표시 방식 선택", ["원자료 비율", "대응 항목 안 상대비중"], horizontal=True)
+    st.subheader("대응 항목별 비율")
+    tier = "완화"
+    sort_year = "2025"
+    display_mode = "원자료" if view == "원자료 비율" else "상대"
     with c_q3_ch:
-        if chart_type_q3.startswith("덤벨"):
-            st.plotly_chart(C.fig_q3_dumbbell(df, mapping, tier, "원자료" if view == "원자료 비율" else "상대"), use_container_width=True)
-        else:
-            # Q③ 범프 영역 차트 전용 Plotly 시각화 로직
-            mt_q3 = C.match_table(df, mapping, tier).copy()
-            val_col = "2025 값(%)" if sort_order.startswith("2025") else "2023 값(%)"
-            mt_q3 = mt_q3.sort_values(by=val_col, ascending=False)
-            
-            fig_q3_area = go.Figure()
-            for idx, row in mt_q3.iterrows():
-                fig_q3_area.add_trace(go.Scatter(
-                    x=["2023년 (실제 사유)", "2025년 (생각 이유)"],
-                    y=[row["2023 값(%)"], row["2025 값(%)"]],
-                    mode="lines+markers",
-                    name=row["표시이름"],
-                    line=dict(width=4),
-                    marker=dict(size=10),
-                    fill='tonexty' if idx > 0 else 'tozeroy'
-                ))
-            fig_q3_area.update_layout(
-                title="2023년 실제 사유 vs 2025년 생각 이유 대응 항목 비중 흐름 (Area/Bump)",
-                xaxis_title="조사 연도",
-                yaxis_title="비율 (%)",
-                hovermode="x unified"
-            )
-            st.plotly_chart(fig_q3_area, use_container_width=True)
+        st.caption("각 연도 안에서 비율이 높은 항목부터 위에 표시합니다.")
+        fig = C.fig_q3_area(df, mapping, tier, display_mode, sort_year)
+        st.plotly_chart(fig, use_container_width=True)
 
-    mt = C.match_table(df, mapping, tier)
-    if sort_order.startswith("2025"):
-        mt = mt.sort_values(by="2025 값(%)", ascending=False)
-    else:
-        mt = mt.sort_values(by="2023 값(%)", ascending=False)
+    mt = C.match_table(df, mapping, tier).sort_values(
+        f"{sort_year} 값(%)", ascending=False, kind="stable")
 
-    st.dataframe(mt[["표시이름", "대응강도", "2023 값(%)", "2025 값(%)", "차이(%p)",
-                     "2023 순위", "2025 순위", "상대비중 차(%p)", "판정근거"]], hide_index=True, use_container_width=True)
+    item_colors = {trace.name: trace.fillcolor for trace in fig.data}
+    dark_colors = {"#4E79A7", "#E15759", "#59A14F", "#B07AA1", "#9C755F"}
+    correspondence = mt[["표시이름", "항목_2023", "항목_2025", "차이(%p)",
+                         "2023 순위", "2025 순위", "상대비중 차(%p)"]].copy()
+    correspondence["항목_2023"] = [f"{item} ({value:.1f}%)" for item, value in zip(mt["항목_2023"], mt["2023 값(%)"])]
+    correspondence["항목_2025"] = [f"{item} ({value:.1f}%)" for item, value in zip(mt["항목_2025"], mt["2025 값(%)"])]
+    correspondence = correspondence.rename(
+        columns={"표시이름": "대응 항목", "항목_2023": "2023 실제 중단 사유", "항목_2025": "2025 중단 생각 이유"})
+    def correspondence_color(item):
+        color = item_colors[item]
+        text_color = "white" if color in dark_colors else "#202020"
+        return f"background-color: {color}; color: {text_color}"
+    styled = correspondence.style.map(correspondence_color, subset=["대응 항목"]).format(
+        {"차이(%p)": "{:.1f}", "상대비중 차(%p)": "{:.1f}"})
+    st.dataframe(styled,
+                 hide_index=True, use_container_width=True)
     
     st.warning("두 조사는 연도·응답 대상·선택지 구성이 달라 '줄었다/늘었다'가 아니라 "
                "대응 항목의 순위와 비중의 방향만 비교합니다.")
