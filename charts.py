@@ -146,24 +146,30 @@ def fig_q1_bar(df, feature, exclude_caution=True):
     """Q① 막대 그래프: 선택한 특성의 집단별 '있다' 비율"""
     d = yesno(df, feature)
     total = float(yesno(df, "전체")["값"].iloc[0])
-    colors, labels = [], []
-    for g, v in zip(d["집단"], d["값"]):
-        warn = is_caution(feature, g, exclude_caution)
-        colors.append(GRAY if warn else C25)
-        labels.append("%.1f%%%s" % (v, " ⚠" if warn else ""))
     ok = d[[not is_caution(feature, g, exclude_caution) for g in d["집단"]]]
     hi = ok.loc[ok["값"].idxmax()]
     lo = ok.loc[ok["값"].idxmin()]
     gap = float(hi["값"] - lo["값"])
+    colors, labels = [], []
+    for g, v in zip(d["집단"], d["값"]):
+        warn = is_caution(feature, g, exclude_caution)
+        colors.append(C25 if not warn and v == hi["값"] else GRAY)
+        labels.append("%.1f%%%s" % (v, " ⚠" if warn else ""))
     fig = go.Figure(go.Bar(x=d["집단"], y=d["값"], marker_color=colors, text=labels,
                            textposition="outside", cliponaxis=False,
                            hovertemplate="%{x}: %{y:.1f}%<extra></extra>"))
-    fig.add_hline(y=total, line_dash="dash", line_color="#888",
-                  annotation_text="전체 %.1f%%" % total, annotation_position="top left")
+    fig.add_hline(y=total, line_dash="dot", line_color="#C7CBD1", line_width=1,
+                  layer="below", annotation_text="전체 %.1f%%" % total,
+                  annotation_position="top left", annotation_font=dict(size=11, color="#A1A7B0"))
     fig.update_yaxes(range=[0, max(float(d["값"].max()) * 1.25, total * 1.25)],
-                     title="'학업중단을 생각한 적 있다' 응답 비율(%)", gridcolor="#EEE")
-    title = "%s: 최고 %s − 최저 %s = %.1f%%p" % (feature, hi["집단"], lo["집단"], gap)
-    return _base_layout(fig, title, height=430)
+                     title="'학업중단을 생각한 적 있다' 응답 비율(%)", showgrid=False)
+    note = "최고 %s − 최저 %s = %.1f%%p" % (hi["집단"], lo["집단"], gap)
+    fig.add_annotation(x=0, y=-0.25, xref="paper", yref="paper", text=note,
+                       showarrow=False, xanchor="left", yanchor="top",
+                       font=dict(size=12, color="#737b8c"))
+    return _base_layout(fig, "<b>%s</b>" % feature, height=450,
+                        margin=dict(l=20, r=20, t=70, b=90),
+                        title_font=dict(size=21))
 
 
 def fig_q1_gap(df, exclude_caution=True):
@@ -235,54 +241,69 @@ def fig_q2_area(df, mode="환산", include_etc=True):
     wide = level_reasons(df, include_etc)
     yes = level_yes(df)
     vals = wide.mul(yes, axis=1) / 100.0 if mode == "환산" else wide.copy()
-    k = len(LEVELS)
+    if mode == "환산":
+        ytitle = "전체 학생 중 비율(%)"
+        title = "학교급별 학업중단 생각 이유: 순위와 전체 학생 중 비율"
+    else:
+        ytitle = "'있다' 응답자 중 비율(%)"
+        title = "학교급별 학업중단 생각 이유: 순위와 응답자 중 비율"
+    return _ranked_area(vals, title, ytitle, LEVELS[0])
+
+
+def _ranked_area(vals, title, ytitle, palette_column):
+    levels = list(vals.columns)
+    k = len(levels)
     lower, upper = {}, {}
-    for j, lv in enumerate(LEVELS):
+    for j, lv in enumerate(levels):
         col = vals[lv]
-        order = col.sort_values(ascending=True, kind="stable").index   # 아래→위 (작은 값부터)
+        order = col.sort_values(ascending=False, kind="stable").index  # 위→아래 (큰 값부터)
         base = 0.0
         for item in order:
             lower[(item, j)] = base
             base += float(col[item])
             upper[(item, j)] = base
-    s = _smooth()
+    # 각 학교급의 너비를 확보하고 학교급 사이에서만 순위를 연결한다.
+    palette = ["#4E79A7", "#F28E2B", "#E15759", "#76B7B2",
+               "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7"]
+    rank_order = vals[palette_column].sort_values(ascending=False, kind="stable").index
+    colors = dict(zip(rank_order, palette + ["#9C755F"]))
     fig = go.Figure()
-    ymax = max(upper[(i, j)] for i in vals.index for j in range(k))
-    for item in wide.index:
+    ymax = max(upper.values())
+    half_width = 0.34
+    transition = _smooth(30)
+    for item in vals.index:
         X, U, L = [], [], []
-        for j in range(k - 1):
-            X += list(j + np.linspace(0, 1, len(s)))
-            U += list(upper[(item, j)] + (upper[(item, j + 1)] - upper[(item, j)]) * s)
-            L += list(lower[(item, j)] + (lower[(item, j + 1)] - lower[(item, j)]) * s)
-        hover = "%s<br>초 %.1f / 중 %.1f / 고 %.1f" % (
-            short(item), vals.loc[item, LEVELS[0]], vals.loc[item, LEVELS[1]], vals.loc[item, LEVELS[2]])
+        for j in range(k):
+            X.extend([j - half_width, j + half_width])
+            U.extend([upper[(item, j)]] * 2)
+            L.extend([lower[(item, j)]] * 2)
+            if j < k - 1:
+                X.extend(j + half_width + (1 - 2 * half_width) * np.linspace(0, 1, len(transition)))
+                U.extend(upper[(item, j)] + (upper[(item, j + 1)] - upper[(item, j)]) * transition)
+                L.extend(lower[(item, j)] + (lower[(item, j + 1)] - lower[(item, j)]) * transition)
+        hover = short(item) + "<br>" + "<br>".join(
+            "%s: %.1f%%" % (lv, vals.loc[item, lv]) for lv in levels)
         fig.add_trace(go.Scatter(
             x=X + X[::-1], y=U + L[::-1], fill="toself", mode="lines", hoveron="fills",
-            line=dict(color="white", width=1), fillcolor=color_of(item), opacity=0.92,
+            line=dict(color="white", width=1), fillcolor=colors[item], opacity=0.9,
             name=short(item), text=hover, hoverinfo="text"))
-        for j in range(k):
-            lo_, up_ = lower[(item, j)], upper[(item, j)]
-            mid = (lo_ + up_) / 2.0
-            rank = int(wide[LEVELS[j]].rank(ascending=False, method="min")[item])
-            if up_ - lo_ >= ymax * 0.045:
-                fig.add_annotation(x=j, y=mid, text="%.1f" % vals.loc[item, LEVELS[j]],
-                                   showarrow=False, font=dict(color="white", size=11))
-            if j == 0:
-                fig.add_annotation(x=0, y=mid, text="%d위 %s" % (rank, short(item)), showarrow=False,
-                                   xanchor="right", xshift=-6, font=dict(size=11, color="#333"))
-            if j == k - 1:
-                fig.add_annotation(x=j, y=mid, text="%d위 %s" % (rank, short(item)), showarrow=False,
-                                   xanchor="left", xshift=6, font=dict(size=11, color="#333"))
-    fig.update_xaxes(tickvals=list(range(k)), ticktext=LEVELS, range=[-0.75, k - 0.25],
-                     showgrid=False, zeroline=False)
-    if mode == "환산":
-        ytitle = "전체 학생 중 비율(%)  ※ 높이 = '있다' 비율"
-        title = "학교급별 학업중단 생각 이유: 순위(위쪽이 높음) + 크기(두께)"
-    else:
-        ytitle = "'있다' 응답자 중 이유 비율(%)"
-        title = "학교급별 학업중단 생각 이유 비율: 순위(위쪽이 높음) + 크기(두께)"
-    fig.update_yaxes(title=ytitle, gridcolor="#EEE")
-    return _base_layout(fig, title, height=600, showlegend=False, margin=dict(l=150, r=150, t=70, b=40))
+        for j, lv in enumerate(levels):
+            lo, up = lower[(item, j)], upper[(item, j)]
+            thickness = up - lo
+            if thickness >= ymax * 0.055:
+                text_color = "white" if colors[item] in ("#4E79A7", "#E15759", "#59A14F", "#B07AA1", "#9C755F") else "#202020"
+                secondary_color = "#e4e4e4" if text_color == "white" else "#555555"
+                label = "<b>%s</b><br><span style='font-size:11px;color:%s'>%.1f%%</span>" % (
+                    short(item), secondary_color, vals.loc[item, lv])
+                fig.add_annotation(x=j, y=(lo + up) / 2, text=label,
+                                   showarrow=False,
+                                   font=dict(color=text_color, size=14))
+    fig.update_xaxes(tickvals=list(range(k)), ticktext=levels, range=[-0.42, k - 1 + 0.42],
+                     side="top", showgrid=False, zeroline=False, tickfont=dict(size=15))
+    fig.update_yaxes(title=ytitle, gridcolor="#EEE", autorange="reversed", rangemode="tozero")
+    return _base_layout(fig, title, height=720, showlegend=True,
+                        legend=dict(orientation="h", yanchor="top", y=-0.08, x=0),
+                        margin=dict(l=65, r=25, t=100, b=100))
 
 
 def fig_q2_hs_type(df):
@@ -299,9 +320,9 @@ def fig_q2_hs_type(df):
                         barmode="group", legend=dict(orientation="h", y=1.08))
 
 
-def fig_q3_dumbbell(df, mapping, tier="기본", mode="원자료"):
+def fig_q3_dumbbell(df, mapping, tier="기본", mode="원자료", sort_year="2025"):
     """Q③ 덤벨 차트: 2023 실제 사유 ↔ 2025 생각 이유 (대응 항목)"""
-    m = match_table(df, mapping, tier)
+    m = match_table(df, mapping, tier).sort_values(f"{sort_year} 값(%)", ascending=False, kind="stable")
     if mode == "원자료":
         a, b = m["2023 값(%)"], m["2025 값(%)"]
         xt = "1순위 응답 비율(%)"
@@ -328,3 +349,13 @@ def fig_q3_dumbbell(df, mapping, tier="기본", mode="원자료"):
     return _base_layout(fig, "실제 중단 사유(2023)와 중단 생각 이유(2025): 대응 항목 비교",
                         height=130 + 70 * len(names), legend=dict(orientation="h", y=1.12),
                         margin=dict(l=20, r=20, t=90, b=40))
+
+
+def fig_q3_area(df, mapping, tier="기본", mode="원자료", sort_year="2025"):
+    m = match_table(df, mapping, tier).set_index("표시이름")
+    suffix = "값(%)" if mode == "원자료" else "상대비중(%)"
+    vals = m[[f"2023 {suffix}", f"2025 {suffix}"]].copy()
+    vals.columns = ["2023 실제 사유", "2025 생각 이유"]
+    ytitle = "원자료 비율(%)" if mode == "원자료" else "대응 항목 안 상대비중(%)"
+    return _ranked_area(vals, "실제 사유와 생각 이유의 대응 항목", ytitle,
+                        "2023 실제 사유" if sort_year == "2023" else "2025 생각 이유")
