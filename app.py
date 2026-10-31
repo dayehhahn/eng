@@ -91,24 +91,8 @@ def load():
 df, mapping = load()
 
 # ------------------------------------------------------------------ 세션 상태 초기화 (사이드바 제어용)
-if "bookmarks" not in st.session_state:
-    st.session_state.bookmarks = []
-
 if "selected_tab_idx" not in st.session_state:
     st.session_state.selected_tab_idx = -1
-
-
-def add_bookmark(title, tab_idx):
-    item = {"title": title, "tab_idx": tab_idx}
-    if item not in st.session_state.bookmarks:
-        st.session_state.bookmarks.append(item)
-        st.toast(f"📌 '{title}' (이)가 북마크에 추가되었습니다!")
-
-
-def remove_bookmark(idx):
-    st.session_state.bookmarks.pop(idx)
-    st.rerun()
-
 
 # ------------------------------------------------------------------ 사이드바 구성
 
@@ -156,24 +140,6 @@ with st.sidebar.container(gap=None):
             title, key=key, type="tertiary", use_container_width=True,
             on_click=lambda idx=tab_idx: st.session_state.update(selected_tab_idx=idx),
         )
-
-st.sidebar.divider()
-
-# 2. 저장된 북마크 바로가기
-st.sidebar.subheader("📌 내가 저장한 북마크")
-if not st.session_state.bookmarks:
-    st.sidebar.caption("저장된 북마크가 없습니다. 그래프 옆의 ⭐ 버튼을 눌러 추가하세요.")
-else:
-    for b_idx, b_item in enumerate(st.session_state.bookmarks):
-        col_b1, col_b2 = st.sidebar.columns([4, 1])
-        with col_b1:
-            st.button(
-                f"🔗 {b_item['title']}", key=f"nav_bm_{b_idx}", use_container_width=True,
-                on_click=lambda idx=b_item["tab_idx"]: st.session_state.update(selected_tab_idx=idx),
-            )
-        with col_b2:
-            if st.button("❌", key=f"del_bm_{b_idx}"):
-                remove_bookmark(b_idx)
 
 st.sidebar.divider()
 
@@ -243,19 +209,8 @@ elif selected_tab == 3:
 
 # ------------------------------------------------------------------ 탭 0: Q① '있다' 비율 분석
 if selected_tab == 0:
-    col_t1, col_bm1 = st.columns([10, 1])
-    with col_t1:
-        st.subheader("Q① 학업중단을 생각한 적 '있다' 비율 격차 분석")
-    with col_bm1:
-        if st.button("⭐", key="bm_q1_top", help="이 섹션 북마크에 추가"):
-            add_bookmark("Q① 생각 '있다' 비율 분석", 0)
-
-    c_g1, col_bm_g1 = st.columns([10, 1])
-    with col_bm_g1:
-        if st.button("⭐", key="bm_q1_c1", help="차트 북마크"):
-            add_bookmark("Q① 격차 비교 바차트", 0)
-    with c_g1:
-        st.plotly_chart(C.fig_q1_gap(df, excl), use_container_width=True)
+    st.subheader("Q① 학업중단을 생각한 적 '있다' 비율 격차 분석")
+    st.plotly_chart(C.fig_q1_gap(df, excl), use_container_width=True)
 
     st.subheader("특성별 집단 비교")
     for feature in C.gap_table(df, excl)["특성"]:
@@ -264,17 +219,8 @@ if selected_tab == 0:
 
 # ------------------------------------------------------------------ 탭 1: Q② 이유 순위 (범프 영역 y축 1위 상단 고정)
 elif selected_tab == 1:
-    col_t2, col_bm2 = st.columns([10, 1])
-    with col_t2:
-        st.subheader("Q② 학교급별 학업중단 생각 이유 순위 변화")
-    with col_bm2:
-        if st.button("⭐", key="bm_q2_top", help="이 섹션 북마크에 추가"):
-            add_bookmark("Q② 학교급별 이유 순위", 1)
-
-    c_q2_ch, c_bm_q2 = st.columns([10, 1])
-    with c_bm_q2:
-        if st.button("⭐", key="bm_q2_chart", help="차트 북마크"):
-            add_bookmark("Q② 범프/영역 순위 차트", 1)
+    st.subheader("Q② 학교급별 학업중단 생각 이유 순위 변화")
+    c_q2_ch = st.container()
     kind = st.radio("그래프 형식 선택", ["범프 영역 (순위+크기)", "범프 선 (순위만)"], horizontal=True)
     etc = st.toggle("'기타' 포함", value=(kind != "범프 선 (순위만)"),
                     help="'기타'는 이유가 아닌 묶음 항목이라 순위 비교에서는 빼는 편이 해석하기 좋습니다.")
@@ -304,12 +250,7 @@ elif selected_tab == 1:
 
 # ------------------------------------------------------------------ 탭 2: Q③ 생각 vs 실제 (범프 영역 차트 선택 시 실제 시각화 구현)
 elif selected_tab == 2:
-    col_t3, col_bm3 = st.columns([10, 1])
-    with col_t3:
-        st.subheader("Q③ 실제 중단 사유(2023) ↔ 중단 생각 이유(2025) 비교")
-    with col_bm3:
-        if st.button("⭐", key="bm_q3_top", help="이 섹션 북마크에 추가"):
-            add_bookmark("Q③ 생각 vs 실제 비교 분석", 2)
+    st.subheader("Q③ 실제 중단 사유(2023) ↔ 중단 생각 이유(2025) 비교")
 
     group = "전체"
     actual_group = ("전체", "소계")
@@ -320,19 +261,13 @@ elif selected_tab == 2:
     actual_rank = st.radio("2023 실제 중단 사유의 순위 기준", ["1순위", "1+2순위", "1+2+3순위"], horizontal=True)
     st.caption("2025 중단 생각 이유는 1순위 자료만 있습니다.")
 
-    c_q3_ch, c_bm_q3 = st.columns([10, 1])
-    with c_bm_q3:
-        if st.button("⭐", key="bm_q3_chart", help="차트 북마크"):
-            add_bookmark("Q③ 시각화 비교 차트", 2)
-
     tier = "완화"
     sort_year = "2023"
-    with c_q3_ch:
-        st.caption("각 연도에서 비율이 높은 항목부터 위에 표시합니다. 대응 선택지가 없는 항목은 해당 연도에만 표시합니다.")
-        fig = C.fig_q3_area(comparison_df, mapping, tier, "원자료", "2023", actual_rank, actual_group, thought_group)
-        st.plotly_chart(fig, use_container_width=True)
-        if actual_rank != "1순위":
-            st.caption("2023년 누적 순위는 한 사람이 여러 사유를 꼽을 수 있어 항목별 비율의 합계가 100%를 넘습니다. 2025년과 순위 기준이 다릅니다.")
+    st.caption("각 연도에서 비율이 높은 항목부터 위에 표시합니다. 대응 선택지가 없는 항목은 해당 연도에만 표시합니다.")
+    fig = C.fig_q3_area(comparison_df, mapping, tier, "원자료", "2023", actual_rank, actual_group, thought_group)
+    st.plotly_chart(fig, use_container_width=True)
+    if actual_rank != "1순위":
+        st.caption("2023년 누적 순위는 한 사람이 여러 사유를 꼽을 수 있어 항목별 비율의 합계가 100%를 넘습니다. 2025년과 순위 기준이 다릅니다.")
 
     st.subheader("전체 항목별 비율")
     mt = C.match_table(comparison_df, mapping, tier, actual_rank, actual_group, thought_group).sort_values(
