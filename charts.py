@@ -1,361 +1,371 @@
-"""charts.py - 데이터 계산 + 그래프(Plotly) 함수 모음.
-app.py(웹앱)와 Colab 미리보기가 같이 쓴다.
-long.csv 열: 조사연도, 자료, 특성, 집단, 구분, 순위기준, 분류, 항목, 값, 결측
+"""학업중단: '생각'과 '실제 사유' 비교 웹앱 (Streamlit - 최종 완벽 수정 버전)
+실행: streamlit run app.py
 """
-import numpy as np
+from pathlib import Path
+
 import pandas as pd
+import streamlit as st
+import plotly.express as px
 import plotly.graph_objects as go
 
-LEVELS = ["초등학교", "중학교", "고등학교"]
+import charts as C
 
-# 표본 주의 집단: 계획서에서 '0.0 칸과 큰 값이 있어 해석 보류'로 정한 집단
-CAUTION = {("가족유형별", "조손가정"), ("가족유형별", "기타")}
+st.set_page_config(page_title="학업중단 생각 vs 실제 사유", page_icon="📊", layout="wide",
+                   initial_sidebar_state="expanded")
+BASE = Path(__file__).parent
 
-C23 = "#E15759"   # 2023 (실제 사유)
-C25 = "#4E79A7"   # 2025 (생각 이유)
-GRAY = "#B8B8B8"
+st.html("""
+<style>
+    .app-fixed-header {
+        position: fixed;
+        z-index: 999990;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 80px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 0 100px 0 24px;
+        background: #fff;
+        border-bottom: 1px solid #e4e5e9;
+        color: #262730;
+        font-size: 20px;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .app-fixed-header .header-source {
+        margin-top: 5px;
+        font-size: 12px;
+        font-weight: 400;
+        color: #687080;
+    }
+    section[data-testid="stSidebar"] {
+        top: 80px !important;
+        height: calc(100vh - 80px) !important;
+        width: 300px !important;
+        min-width: 300px !important;
+        margin-left: 0 !important;
+        transform: none !important;
+        visibility: visible !important;
+    }
+    [data-testid="stSidebarCollapseButton"] { display: none !important; }
+    .stMainBlockContainer { padding-top: 100px; }
+    @media (max-width: 640px) {
+        .app-fixed-header { height: 100px; padding-left: 16px; padding-right: 16px; font-size: 15px; }
+        .app-fixed-header .header-source { font-size: 11px; }
+        [data-testid="stAppViewContainer"] {
+            flex-direction: column !important;
+            padding-top: 100px;
+        }
+        section[data-testid="stSidebar"] {
+            position: relative !important;
+            top: 0 !important;
+            width: 100% !important;
+            min-width: 100% !important;
+            height: 290px !important;
+            min-height: 290px !important;
+            z-index: 1 !important;
+        }
+        [data-testid="stSidebarHeader"],
+        [data-testid="stSidebarUserContent"] h1 { display: none !important; }
+        [data-testid="stMain"] { position: relative !important; top: auto !important; }
+        .stMainBlockContainer { padding-top: 24px !important; }
+    }
+</style>
+<div class="app-fixed-header">
+    <div>📊 학업중단, 생각과 실제는 어디까지 겹칠까?</div>
+    <div class="header-source">자료: 2025 '학업중단 생각 여부 및 이유'(초·중·고) / 2023 '학업 중단 사유' · 단위: % · 상관은 인과가 아님</div>
+</div>
+""")
 
-SHORT = {
-    "괴롭힘을 당해서": "괴롭힘",
-    "성적이 좋지 않아서": "성적",
-    "선생님이 불공평한 대우를 해서": "교사의 불공평",
-    "가정이 경제적으로 어려워서": "가정 경제",
-    "공부가 하기 싫어서": "공부 하기 싫음",
-    "학교 규율이 엄격하고 자유롭지 않아서": "엄격한 규율",
-    "내가 배우고 싶은 내용이 없어서": "배울 내용 없음",
-    "귀찮고 아무것도 하기 싫어서": "귀찮고 하기 싫음",
-    "기타": "기타",
+
+@st.cache_data
+def load():
+    df = pd.read_csv(BASE / "long.csv", encoding="utf-8-sig")
+    mp = pd.read_csv(BASE / "mapping.csv", encoding="utf-8-sig")
+    return df, mp
+
+
+df, mapping = load()
+
+# ------------------------------------------------------------------ 세션 상태 초기화 (사이드바 제어용)
+if "bookmarks" not in st.session_state:
+    st.session_state.bookmarks = []
+
+if "selected_tab_idx" not in st.session_state:
+    st.session_state.selected_tab_idx = -1
+
+
+def add_bookmark(title, tab_idx):
+    item = {"title": title, "tab_idx": tab_idx}
+    if item not in st.session_state.bookmarks:
+        st.session_state.bookmarks.append(item)
+        st.toast(f"📌 '{title}' (이)가 북마크에 추가되었습니다!")
+
+
+def remove_bookmark(idx):
+    st.session_state.bookmarks.pop(idx)
+    st.rerun()
+
+
+# ------------------------------------------------------------------ 사이드바 구성
+
+st.sidebar.title("🧭 바로가기 & 탐색")
+
+# 1. 연구 목차
+tab_titles = {
+    -1: "연구 개요 및 한계",
+    0: "Q1 '있다' 비율 분석",
+    1: "Q2 이유 순위 (범프 차트)",
+    2: "Q3 생각 vs 실제 사유",
+    3: "데이터 무결성 검증",
 }
-PALETTE = ["#E15759", "#F28E2B", "#EDC948", "#76B7B2", "#4E79A7",
-           "#59A14F", "#B07AA1", "#9C755F"]
-_COLOR = {}
+st.sidebar.subheader("목차")
+selected_tab = st.session_state.selected_tab_idx
+st.sidebar.markdown("""
+    <style>
+    section[data-testid="stSidebar"] div[class*="st-key-toc_"] button {
+        justify-content: flex-start !important;
+        border: 0;
+        padding: 0.35rem 0.75rem !important;
+        text-align: left !important;
+    }
+    section[data-testid="stSidebar"] div[class*="st-key-toc_"] button > div,
+    section[data-testid="stSidebar"] div[class*="st-key-toc_"] button p {
+        width: 100%;
+        text-align: left !important;
+        justify-content: flex-start !important;
+    }
+    section[data-testid="stSidebar"] div[class*="st-key-toc_"] button:hover {
+        color: #e34b4b;
+        background: rgba(227, 75, 75, 0.07);
+    }
+    section[data-testid="stSidebar"] div.st-key-toc_active button {
+        color: #d63333;
+        background: rgba(227, 75, 75, 0.1);
+        font-weight: 700;
+    }
+    </style>
+""", unsafe_allow_html=True)
+with st.sidebar.container(gap=None):
+    for tab_idx, title in tab_titles.items():
+        key = "toc_active" if tab_idx == selected_tab else f"toc_{tab_idx}"
+        st.button(
+            title, key=key, type="tertiary", use_container_width=True,
+            on_click=lambda idx=tab_idx: st.session_state.update(selected_tab_idx=idx),
+        )
+
+st.sidebar.divider()
+
+# 2. 저장된 북마크 바로가기
+st.sidebar.subheader("📌 내가 저장한 북마크")
+if not st.session_state.bookmarks:
+    st.sidebar.caption("저장된 북마크가 없습니다. 그래프 옆의 ⭐ 버튼을 눌러 추가하세요.")
+else:
+    for b_idx, b_item in enumerate(st.session_state.bookmarks):
+        col_b1, col_b2 = st.sidebar.columns([4, 1])
+        with col_b1:
+            st.button(
+                f"🔗 {b_item['title']}", key=f"nav_bm_{b_idx}", use_container_width=True,
+                on_click=lambda idx=b_item["tab_idx"]: st.session_state.update(selected_tab_idx=idx),
+            )
+        with col_b2:
+            if st.button("❌", key=f"del_bm_{b_idx}"):
+                remove_bookmark(b_idx)
+
+st.sidebar.divider()
+
+# 4. 사이드바 맨 하단: 전역 설정 (테마 및 표본 처리)
+st.sidebar.subheader("🎨 대시보드 전역 설정")
+theme_choice = st.sidebar.selectbox(
+    "🌈 테마 선택",
+    ["기본 (Streamlit Standard)", "미드나잇 다크 네온 (Midnight Neon)", "소프트 라벤더 베이지 (Lavender Warm)", "오션 브리즈 다크 (Ocean Breeze)"],
+    index=0
+)
+
+theme_css = {
+    "기본 (Streamlit Standard)": "",
+    "미드나잇 다크 네온 (Midnight Neon)": """
+        <style>
+        .stApp { background-color: #0b0f19; color: #f3f4f6; }
+        section[data-testid="stSidebar"] { background-color: #111827; }
+        div[data-testid="stMetricValue"] { color: #38bdf8 !important; }
+        h1, h2, h3 { color: #38bdf8 !important; }
+        </style>
+    """,
+    "소프트 라벤더 베이지 (Lavender Warm)": """
+        <style>
+        .stApp { background-color: #faf5ff; color: #3b0764; }
+        section[data-testid="stSidebar"] { background-color: #f3e8ff; }
+        div[data-testid="stMetricValue"] { color: #7e22ce !important; }
+        h1, h2, h3 { color: #6b21a8 !important; }
+        </style>
+    """,
+    "오션 브리즈 다크 (Ocean Breeze)": """
+        <style>
+        .stApp { background-color: #022c22; color: #ccfbf1; }
+        section[data-testid="stSidebar"] { background-color: #064e3b; }
+        div[data-testid="stMetricValue"] { color: #2dd4bf !important; }
+        h1, h2, h3 { color: #2dd4bf !important; }
+        </style>
+    """
+}
+st.markdown(theme_css[theme_choice], unsafe_allow_html=True)
+
+excl = st.sidebar.toggle("표본 주의 집단 제외·회색 표시", value=True,
+                         help="계획서에서 0.0 칸·큰 값이 있어 해석을 보류하기로 한 집단(가족유형별 조손가정·기타)")
+st.sidebar.caption("⚠ 표본 크기·오차는 원자료에 없어 '유의하다'는 표현을 쓰지 않습니다.")
 
 
-def short(name):
-    return SHORT.get(name, name)
+# ------------------------------------------------------------------ 메인 화면 출력
 
+if selected_tab == -1:
+    st.subheader("📖 연구 개요 및 한계")
+    st.markdown(
+        "- **Q①** 학업중단을 생각한 적 '있다'는 비율은 학교급·학업성적·경제적 수준에 따라 몇 %p 다른가?\n"
+        "- **Q②** 학업중단 생각 이유 1순위는 초·중·고에서 어떻게 달라지며, 고등학교에서 가장 높은 항목은?\n"
+        "- **Q③** 2023 실제 중단 사유와 2025 중단 생각 이유에서 대응되는 항목의 비율은 각각 얼마인가?")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.success("**말할 수 있는 것**\n\n- 2025 안에서 집단별 '있다' 비율의 차이(%p)\n- 학교급별 이유의 순위·비율 변화\n- 의미가 비슷한 항목의 순위·비중 방향")
+    with c2:
+        st.error("**말할 수 없는 것**\n\n- 2023과 2025의 단순 '증감'\n- 집단 차이의 '원인'(상관 ≠ 인과)\n- '생각한 학생이 그대로 중단한다'는 연결")
 
-def color_of(name):
-    if name == "기타":
-        return GRAY
-    if name not in _COLOR:
-        _COLOR[name] = PALETTE[len(_COLOR) % len(PALETTE)]
-    return _COLOR[name]
+elif selected_tab == 3:
+    st.subheader("🔍 데이터 무결성 검증")
+    st.subheader("가공 데이터 및 합계 검증")
+    year = st.selectbox("조사연도 선택", sorted(df["조사연도"].unique()), key="val_year")
+    st.dataframe(df[df["조사연도"] == year], hide_index=True, use_container_width=True)
+    st.download_button("long.csv 내려받기", df.to_csv(index=False).encode("utf-8-sig"),
+                       file_name="long.csv", mime="text/csv")
 
+# ------------------------------------------------------------------ 탭 0: Q① '있다' 비율 분석
+if selected_tab == 0:
+    col_t1, col_bm1 = st.columns([10, 1])
+    with col_t1:
+        st.subheader("Q① 학업중단을 생각한 적 '있다' 비율 격차 분석")
+    with col_bm1:
+        if st.button("⭐", key="bm_q1_top", help="이 섹션 북마크에 추가"):
+            add_bookmark("Q① 생각 '있다' 비율 분석", 0)
 
-# ---------------------------------------------------------------- 데이터 꺼내기
-def yesno(df, feature=None):
-    """2025 '학업중단 생각 있다' 비율"""
-    d = df[(df["조사연도"] == 2025) & (df["구분"] == "생각여부") & (df["항목"] == "있다")]
-    if feature is not None:
-        d = d[d["특성"] == feature]
-    return d[["특성", "집단", "값"]].reset_index(drop=True)
+    c_g1, col_bm_g1 = st.columns([10, 1])
+    with col_bm_g1:
+        if st.button("⭐", key="bm_q1_c1", help="차트 북마크"):
+            add_bookmark("Q① 격차 비교 바차트", 0)
+    with c_g1:
+        st.plotly_chart(C.fig_q1_gap(df, excl), use_container_width=True)
 
+    st.subheader("특성별 집단 비교")
+    for feature in C.gap_table(df, excl)["특성"]:
+        st.plotly_chart(C.fig_q1_bar(df, feature, excl), use_container_width=True,
+                        key=f"q1_detail_{feature}")
 
-def is_caution(feature, group, on=True):
-    return on and ((feature, group) in CAUTION)
+# ------------------------------------------------------------------ 탭 1: Q② 이유 순위 (범프 영역 y축 1위 상단 고정)
+elif selected_tab == 1:
+    col_t2, col_bm2 = st.columns([10, 1])
+    with col_t2:
+        st.subheader("Q② 학교급별 학업중단 생각 이유 순위 변화")
+    with col_bm2:
+        if st.button("⭐", key="bm_q2_top", help="이 섹션 북마크에 추가"):
+            add_bookmark("Q② 학교급별 이유 순위", 1)
 
+    c_q2_ch, c_bm_q2 = st.columns([10, 1])
+    with c_bm_q2:
+        if st.button("⭐", key="bm_q2_chart", help="차트 북마크"):
+            add_bookmark("Q② 범프/영역 순위 차트", 1)
+    kind = st.radio("그래프 형식 선택", ["범프 영역 (순위+크기)", "범프 선 (순위만)"], horizontal=True)
+    etc = st.toggle("'기타' 포함", value=(kind != "범프 선 (순위만)"),
+                    help="'기타'는 이유가 아닌 묶음 항목이라 순위 비교에서는 빼는 편이 해석하기 좋습니다.")
+    if kind.startswith("범프 영역"):
+        mode = st.radio("두께 기준 선택", ["전체 학생 중 환산(%)", "'있다' 응답자 중 비율(%)"], horizontal=True)
 
-def gap_table(df, exclude_caution=True):
-    """특성별로 '있다' 비율의 최고 집단 - 최저 집단 격차(%p)"""
-    rows = []
-    d = yesno(df)
-    for f, g in d.groupby("특성", sort=False):
-        if f == "전체":
-            continue
-        if exclude_caution:
-            g = g[[not is_caution(f, x) for x in g["집단"]]]
-        hi = g.loc[g["값"].idxmax()]
-        lo = g.loc[g["값"].idxmin()]
-        rows.append({"특성": f, "최고 집단": hi["집단"], "최고(%)": hi["값"],
-                     "최저 집단": lo["집단"], "최저(%)": lo["값"],
-                     "격차(%p)": round(float(hi["값"] - lo["값"]), 1)})
-    out = pd.DataFrame(rows)
-    return out.sort_values("격차(%p)", ascending=False).reset_index(drop=True)
+    with c_q2_ch:
+        if kind.startswith("범프 영역"):
+            md = "환산" if mode.startswith("전체") else "이유내"
+            fig_q2 = C.fig_q2_area(df, md, etc)
+            st.plotly_chart(fig_q2, use_container_width=True)
+        else:
+            fig_q2 = C.fig_q2_bump(df, etc)
+            # 1위가 상단에 오도록 y축 반전
+            fig_q2.update_layout(yaxis=dict(autorange="reversed", dtick=1))
+            st.plotly_chart(fig_q2, use_container_width=True)
 
+    wide = C.level_reasons(df, include_etc=False)
+    hs = wide["고등학교"].idxmax()
+    st.info("고등학교에서 1순위 비율이 가장 높은 항목('기타' 제외): **%s** (%.1f%%). 2위 **%s** (%.1f%%)." % (
+        hs, wide.loc[hs, "고등학교"],
+        wide["고등학교"].drop(hs).idxmax(), wide["고등학교"].drop(hs).max()))
+    
+    tbl = C.level_reasons(df, include_etc=True).copy()
+    tbl.columns = [c + " (%)" for c in tbl.columns]
+    st.dataframe(tbl, use_container_width=True)
 
-def level_reasons(df, include_etc=True):
-    """학교급별 이유(1순위) 표: 행=이유, 열=초·중·고"""
-    d = df[(df["조사연도"] == 2025) & (df["구분"] == "생각이유") & (df["특성"] == "학교급별")]
-    wide = d.pivot(index="항목", columns="집단", values="값")
-    wide = wide.reindex(index=list(dict.fromkeys(d["항목"])), columns=LEVELS)
-    if not include_etc:
-        wide = wide.drop(index="기타", errors="ignore")
-    return wide
+# ------------------------------------------------------------------ 탭 2: Q③ 생각 vs 실제 (범프 영역 차트 선택 시 실제 시각화 구현)
+elif selected_tab == 2:
+    col_t3, col_bm3 = st.columns([10, 1])
+    with col_t3:
+        st.subheader("Q③ 실제 중단 사유(2023) ↔ 중단 생각 이유(2025) 비교")
+    with col_bm3:
+        if st.button("⭐", key="bm_q3_top", help="이 섹션 북마크에 추가"):
+            add_bookmark("Q③ 생각 vs 실제 비교 분석", 2)
 
+    group = "전체"
+    actual_group = ("전체", "소계")
+    thought_group = ("학교급별", "고등학교")
+    comparison_df = df
+    st.caption("2023년 실제 사유는 만 13~24세 학업중단 경험자, 2025년 생각 이유는 고등학생을 대상으로 합니다.")
+    st.caption("2023년 실제 사유의 전체 응답자는 33명입니다.")
+    actual_rank = st.radio("2023 실제 중단 사유의 순위 기준", ["1순위", "1+2순위", "1+2+3순위"], horizontal=True)
+    st.caption("2025 중단 생각 이유는 1순위 자료만 있습니다.")
 
-def level_yes(df):
-    d = yesno(df, "학교급별").set_index("집단")["값"]
-    return d.reindex(LEVELS)
+    c_q3_ch, c_bm_q3 = st.columns([10, 1])
+    with c_bm_q3:
+        if st.button("⭐", key="bm_q3_chart", help="차트 북마크"):
+            add_bookmark("Q③ 시각화 비교 차트", 2)
 
+    tier = "완화"
+    sort_year = "2023"
+    with c_q3_ch:
+        st.caption("각 연도에서 비율이 높은 항목부터 위에 표시합니다. 대응 선택지가 없는 항목은 해당 연도에만 표시합니다.")
+        fig = C.fig_q3_area(comparison_df, mapping, tier, "원자료", "2023", actual_rank, actual_group, thought_group)
+        st.plotly_chart(fig, use_container_width=True)
+        if actual_rank != "1순위":
+            st.caption("2023년 누적 순위는 한 사람이 여러 사유를 꼽을 수 있어 항목별 비율의 합계가 100%를 넘습니다. 2025년과 순위 기준이 다릅니다.")
 
-def hs_type_reasons(df):
-    d = df[(df["조사연도"] == 2025) & (df["구분"] == "생각이유") & (df["특성"] == "고교유형별")]
-    wide = d.pivot(index="항목", columns="집단", values="값")
-    return wide.reindex(index=list(dict.fromkeys(d["항목"])))
+    st.subheader("전체 항목별 비율")
+    mt = C.match_table(comparison_df, mapping, tier, actual_rank, actual_group, thought_group).sort_values(
+        f"{sort_year} 값(%)", ascending=False, kind="stable")
+    actual_values = mt.loc[mt["항목_2023"].notna(), "2023 값(%)"]
+    if actual_values.isna().all():
+        st.warning(f"2023년 {group} 집단은 실제 중단 사유의 값이 제공되지 않습니다. 2025년 생각 이유만 표시합니다.")
+    elif actual_values.isna().any():
+        st.caption("2023년 실제 중단 사유의 일부 값은 원자료에서 제공되지 않아 ‘값 없음’으로 표시합니다.")
 
+    item_colors = {trace.name: trace.fillcolor for trace in fig.data}
+    columns = ["표시이름", "항목_2023", "항목_2025", "2023 순위", "2025 순위"]
+    if actual_rank == "1순위":
+        columns.append("차이(%p)")
+    correspondence = mt[columns].copy()
+    def item_label(item, value):
+        if pd.isna(item):
+            return "대응 선택지 없음"
+        return f"{item} ({value:.1f}%)" if pd.notna(value) else f"{item} (값 없음)"
+    correspondence["항목_2023"] = [item_label(item, value) for item, value in zip(mt["항목_2023"], mt["2023 값(%)"])]
+    correspondence["항목_2025"] = [item_label(item, value) for item, value in zip(mt["항목_2025"], mt["2025 값(%)"])]
+    correspondence = correspondence.rename(
+        columns={"표시이름": "대응 항목", "항목_2023": "2023 실제 중단 사유", "항목_2025": "2025 중단 생각 이유"})
+    def correspondence_color(item):
+        color = item_colors[C.short(item)]
+        return f"background-color: {color}; color: #111111"
+    def missing_color(value):
+        return "background-color: #eeeeee; color: #555555" if value == "대응 선택지 없음" or value.endswith("(값 없음)") else ""
+    styled = correspondence.style.map(correspondence_color, subset=["대응 항목"]).map(
+        missing_color, subset=["2023 실제 중단 사유", "2025 중단 생각 이유"]).format(
+        {"차이(%p)": "{:.1f}"} if actual_rank == "1순위" else {}, na_rep="—")
+    st.table(styled, hide_index=True, width="stretch")
+    
+    st.warning("두 조사는 연도·응답 대상·선택지 구성이 달라 '줄었다/늘었다'가 아니라 "
+               "대응 항목의 순위와 비중의 방향만 비교합니다.")
 
-def match_table(df, mapping, tier="기본"):
-    """2023 실제 사유(1순위, 전체) ↔ 2025 생각 이유(1순위, 전체) 대응표"""
-    a = df[(df["조사연도"] == 2023) & (df["구분"] == "사유") & (df["순위기준"] == "1순위")
-           & (df["특성"] == "전체")].set_index("항목")["값"]
-    b = df[(df["조사연도"] == 2025) & (df["구분"] == "생각이유") & (df["특성"] == "전체")
-           ].set_index("항목")["값"]
-    order = {"엄격": 1, "기본": 2, "완화": 3}
-    m = mapping[mapping["대응강도"] != "없음"].copy()
-    m = m[m["최소단계"].map(order) <= order[tier]]
-    m["2023 값(%)"] = m["항목_2023"].map(a)
-    m["2025 값(%)"] = m["항목_2025"].map(b)
-    m["차이(%p)"] = (m["2025 값(%)"] - m["2023 값(%)"]).round(1)
-    m["2023 상대비중(%)"] = (m["2023 값(%)"] / m["2023 값(%)"].sum() * 100).round(1)
-    m["2025 상대비중(%)"] = (m["2025 값(%)"] / m["2025 값(%)"].sum() * 100).round(1)
-    m["상대비중 차(%p)"] = (m["2025 상대비중(%)"] - m["2023 상대비중(%)"]).round(1)
-    m["2023 순위"] = m["2023 값(%)"].rank(ascending=False, method="min").astype(int)
-    m["2025 순위"] = m["2025 값(%)"].rank(ascending=False, method="min").astype(int)
-    return m.reset_index(drop=True)
-
-
-def unmatched(df, mapping):
-    """대응되지 않는 항목(한쪽 조사에만 있는 선택지)과 그 값"""
-    a = df[(df["조사연도"] == 2023) & (df["구분"] == "사유") & (df["순위기준"] == "1순위")
-           & (df["특성"] == "전체")].set_index("항목")["값"]
-    b = df[(df["조사연도"] == 2025) & (df["구분"] == "생각이유") & (df["특성"] == "전체")
-           ].set_index("항목")["값"]
-    u = mapping[mapping["대응강도"] == "없음"]
-    rows = []
-    for _, r in u.iterrows():
-        if isinstance(r["항목_2023"], str) and r["항목_2023"]:
-            rows.append({"조사": "2023 실제 사유", "항목": r["항목_2023"],
-                         "1순위(%)": a.get(r["항목_2023"], np.nan), "비고": r["판정근거"]})
-        if isinstance(r["항목_2025"], str) and r["항목_2025"]:
-            rows.append({"조사": "2025 생각 이유", "항목": r["항목_2025"],
-                         "1순위(%)": b.get(r["항목_2025"], np.nan), "비고": r["판정근거"]})
-    return pd.DataFrame(rows)
-
-
-# ---------------------------------------------------------------- 그래프
-def _base_layout(fig, title, height=460, **kw):
-    layout = dict(title=dict(text=title, x=0.01), height=height, plot_bgcolor="white",
-                  margin=dict(l=20, r=20, t=70, b=40), font=dict(size=13))
-    layout.update(kw)          # 그래프마다 다른 설정(여백 등)은 덮어쓴다
-    fig.update_layout(**layout)
-    return fig
-
-
-def fig_q1_bar(df, feature, exclude_caution=True):
-    """Q① 막대 그래프: 선택한 특성의 집단별 '있다' 비율"""
-    d = yesno(df, feature)
-    total = float(yesno(df, "전체")["값"].iloc[0])
-    ok = d[[not is_caution(feature, g, exclude_caution) for g in d["집단"]]]
-    hi = ok.loc[ok["값"].idxmax()]
-    lo = ok.loc[ok["값"].idxmin()]
-    gap = float(hi["값"] - lo["값"])
-    colors, labels = [], []
-    for g, v in zip(d["집단"], d["값"]):
-        warn = is_caution(feature, g, exclude_caution)
-        colors.append(C25 if not warn and v == hi["값"] else GRAY)
-        labels.append("%.1f%%%s" % (v, " ⚠" if warn else ""))
-    fig = go.Figure(go.Bar(x=d["집단"], y=d["값"], marker_color=colors, text=labels,
-                           textposition="outside", cliponaxis=False,
-                           hovertemplate="%{x}: %{y:.1f}%<extra></extra>"))
-    fig.add_hline(y=total, line_dash="dot", line_color="#C7CBD1", line_width=1,
-                  layer="below", annotation_text="전체 %.1f%%" % total,
-                  annotation_position="top left", annotation_font=dict(size=11, color="#A1A7B0"))
-    fig.update_yaxes(range=[0, max(float(d["값"].max()) * 1.25, total * 1.25)],
-                     title="'학업중단을 생각한 적 있다' 응답 비율(%)", showgrid=False)
-    note = "최고 %s − 최저 %s = %.1f%%p" % (hi["집단"], lo["집단"], gap)
-    fig.add_annotation(x=0, y=-0.25, xref="paper", yref="paper", text=note,
-                       showarrow=False, xanchor="left", yanchor="top",
-                       font=dict(size=12, color="#737b8c"))
-    return _base_layout(fig, "<b>%s</b>" % feature, height=450,
-                        margin=dict(l=20, r=20, t=70, b=90),
-                        title_font=dict(size=21))
-
-
-def fig_q1_gap(df, exclude_caution=True):
-    """특성별 격차 한눈에 보기(가로 막대)"""
-    g = gap_table(df, exclude_caution)
-    text = ["%.1f%%p (%s %.1f%% − %s %.1f%%)" % (r["격차(%p)"], r["최고 집단"], r["최고(%)"],
-                                              r["최저 집단"], r["최저(%)"]) for _, r in g.iterrows()]
-    fig = go.Figure(go.Bar(x=g["격차(%p)"], y=g["특성"], orientation="h", text=text,
-                           textposition="outside", cliponaxis=False, marker_color=C25,
-                           hovertemplate="%{y}: %{x:.1f}%p<extra></extra>"))
-    fig.update_yaxes(autorange="reversed")
-    fig.update_xaxes(range=[0, float(g["격차(%p)"].max()) * 2.1], title="최고 집단 − 최저 집단 (%p)",
-                     gridcolor="#EEE")
-    return _base_layout(fig, "어느 특성에서 집단 간 차이가 가장 큰가", height=420,
-                        margin=dict(l=20, r=20, t=70, b=40))
-
-
-def _spread_ties(ranks):
-    """같은 순위(동점)가 겹쳐 보이지 않도록 y위치를 조금씩 벌린다"""
-    pos = {}
-    groups = {}
-    for item, r in ranks.items():
-        groups.setdefault(r, []).append(item)
-    for r, items in groups.items():
-        n = len(items)
-        for i, item in enumerate(items):
-            pos[item] = r + (i - (n - 1) / 2.0) * 0.45
-    return pos
-
-
-def fig_q2_bump(df, include_etc=False):
-    """Q② 범프 차트: 초→중→고 순위 변화(점 안 숫자=비율)"""
-    wide = level_reasons(df, include_etc)
-    rk = wide.rank(ascending=False, method="min")
-    n = len(wide.index)
-    fig = go.Figure()
-    ypos = {lv: _spread_ties(rk[lv].to_dict()) for lv in LEVELS}
-    for item in wide.index:
-        xs = LEVELS
-        ys = [ypos[lv][item] for lv in LEVELS]
-        vals = [float(wide.loc[item, lv]) for lv in LEVELS]
-        col = color_of(item)
-        fig.add_trace(go.Scatter(
-            x=xs, y=ys, mode="lines+markers+text", name=short(item),
-            line=dict(width=5, color=col), marker=dict(size=34, color=col),
-            text=["%.1f" % v for v in vals], textposition="middle center",
-            textfont=dict(color="white", size=11),
-            hovertemplate=short(item) + " | %{x}: %{text}%<extra></extra>"))
-        fig.add_annotation(x=LEVELS[0], y=ys[0], text=short(item), showarrow=False,
-                           xanchor="right", xshift=-26, font=dict(size=12, color=col))
-        fig.add_annotation(x=LEVELS[-1], y=ys[-1], text=short(item), showarrow=False,
-                           xanchor="left", xshift=26, font=dict(size=12, color=col))
-    fig.update_yaxes(range=[n + 0.6, 0.4], dtick=1, title="순위 (1위가 위)",
-                     showgrid=False, zeroline=False)
-    fig.update_xaxes(showgrid=False, type="category")
-    return _base_layout(fig, "학교급별 '학업중단을 생각한 이유' 순위 변화 (점 안 숫자 = 비율 %)",
-                        height=560, showlegend=False, margin=dict(l=130, r=130, t=70, b=40))
-
-
-def _smooth(n=25):
-    t = np.linspace(0, 1, n)
-    return t * t * (3 - 2 * t)
-
-
-def fig_q2_area(df, mode="환산", include_etc=True):
-    """Q② 범프 영역 그래프: 순위(위쪽일수록 높음) + 크기(띠 두께) 동시 표시
-    mode='환산'  : 띠 두께 = '있다' 비율 × 이유 비율 (전체 학생 중 %)  → 전체 높이 = '있다' 비율
-    mode='이유내': 띠 두께 = 이유 비율(%) (그 학교급에서 '있다'고 답한 학생 중)"""
-    wide = level_reasons(df, include_etc)
-    yes = level_yes(df)
-    vals = wide.mul(yes, axis=1) / 100.0 if mode == "환산" else wide.copy()
-    if mode == "환산":
-        ytitle = "전체 학생 중 비율(%)"
-        title = "학교급별 학업중단 생각 이유: 순위와 전체 학생 중 비율"
-    else:
-        ytitle = "'있다' 응답자 중 비율(%)"
-        title = "학교급별 학업중단 생각 이유: 순위와 응답자 중 비율"
-    return _ranked_area(vals, title, ytitle, LEVELS[0])
-
-
-def _ranked_area(vals, title, ytitle, palette_column):
-    levels = list(vals.columns)
-    k = len(levels)
-    lower, upper = {}, {}
-    for j, lv in enumerate(levels):
-        col = vals[lv]
-        order = col.sort_values(ascending=False, kind="stable").index  # 위→아래 (큰 값부터)
-        base = 0.0
-        for item in order:
-            lower[(item, j)] = base
-            base += float(col[item])
-            upper[(item, j)] = base
-    # 각 학교급의 너비를 확보하고 학교급 사이에서만 순위를 연결한다.
-    palette = ["#4E79A7", "#F28E2B", "#E15759", "#76B7B2",
-               "#59A14F", "#EDC948", "#B07AA1", "#FF9DA7"]
-    rank_order = vals[palette_column].sort_values(ascending=False, kind="stable").index
-    colors = dict(zip(rank_order, palette + ["#9C755F"]))
-    fig = go.Figure()
-    ymax = max(upper.values())
-    half_width = 0.34
-    transition = _smooth(30)
-    for item in vals.index:
-        X, U, L = [], [], []
-        for j in range(k):
-            X.extend([j - half_width, j + half_width])
-            U.extend([upper[(item, j)]] * 2)
-            L.extend([lower[(item, j)]] * 2)
-            if j < k - 1:
-                X.extend(j + half_width + (1 - 2 * half_width) * np.linspace(0, 1, len(transition)))
-                U.extend(upper[(item, j)] + (upper[(item, j + 1)] - upper[(item, j)]) * transition)
-                L.extend(lower[(item, j)] + (lower[(item, j + 1)] - lower[(item, j)]) * transition)
-        hover = short(item) + "<br>" + "<br>".join(
-            "%s: %.1f%%" % (lv, vals.loc[item, lv]) for lv in levels)
-        fig.add_trace(go.Scatter(
-            x=X + X[::-1], y=U + L[::-1], fill="toself", mode="lines", hoveron="fills",
-            line=dict(color="white", width=1), fillcolor=colors[item], opacity=0.9,
-            name=short(item), text=hover, hoverinfo="text"))
-        for j, lv in enumerate(levels):
-            lo, up = lower[(item, j)], upper[(item, j)]
-            thickness = up - lo
-            if thickness >= ymax * 0.055:
-                text_color = "white" if colors[item] in ("#4E79A7", "#E15759", "#59A14F", "#B07AA1", "#9C755F") else "#202020"
-                secondary_color = "#e4e4e4" if text_color == "white" else "#555555"
-                label = "<b>%s</b><br><span style='font-size:11px;color:%s'>%.1f%%</span>" % (
-                    short(item), secondary_color, vals.loc[item, lv])
-                fig.add_annotation(x=j, y=(lo + up) / 2, text=label,
-                                   showarrow=False,
-                                   font=dict(color=text_color, size=14))
-    fig.update_xaxes(tickvals=list(range(k)), ticktext=levels, range=[-0.42, k - 1 + 0.42],
-                     side="top", showgrid=False, zeroline=False, tickfont=dict(size=15))
-    fig.update_yaxes(title=ytitle, gridcolor="#EEE", autorange="reversed", rangemode="tozero")
-    return _base_layout(fig, title, height=720, showlegend=True,
-                        legend=dict(orientation="h", yanchor="top", y=-0.08, x=0),
-                        margin=dict(l=65, r=25, t=100, b=100))
-
-
-def fig_q2_hs_type(df):
-    """고등학교 유형별(일반계고·특성화계고) 이유 비교: 막대 그래프"""
-    w = hs_type_reasons(df)
-    w = w.sort_values(w.columns[0], ascending=True)
-    fig = go.Figure()
-    for col, c in zip(w.columns, [C25, "#F28E2B"]):
-        fig.add_trace(go.Bar(y=[short(i) for i in w.index], x=w[col], name=col, orientation="h",
-                             marker_color=c, text=["%.1f" % v for v in w[col]],
-                             textposition="outside", cliponaxis=False))
-    fig.update_xaxes(title="이유 1순위 비율(%)", range=[0, float(w.max().max()) * 1.2], gridcolor="#EEE")
-    return _base_layout(fig, "고등학교 유형별 학업중단 생각 이유 (1순위)", height=520,
-                        barmode="group", legend=dict(orientation="h", y=1.08))
-
-
-def fig_q3_dumbbell(df, mapping, tier="기본", mode="원자료", sort_year="2025"):
-    """Q③ 덤벨 차트: 2023 실제 사유 ↔ 2025 생각 이유 (대응 항목)"""
-    m = match_table(df, mapping, tier).sort_values(f"{sort_year} 값(%)", ascending=False, kind="stable")
-    if mode == "원자료":
-        a, b = m["2023 값(%)"], m["2025 값(%)"]
-        xt = "1순위 응답 비율(%)"
-    else:
-        a, b = m["2023 상대비중(%)"], m["2025 상대비중(%)"]
-        xt = "대응 항목 합계를 100으로 했을 때의 비중(%)"
-    names = list(m["표시이름"])
-    fig = go.Figure()
-    for nm, x1, x2 in zip(names, a, b):
-        fig.add_trace(go.Scatter(x=[x1, x2], y=[nm, nm], mode="lines",
-                                 line=dict(color="#CCCCCC", width=5), showlegend=False,
-                                 hoverinfo="skip"))
-    pos23 = ["middle left" if x1 <= x2 else "middle right" for x1, x2 in zip(a, b)]
-    pos25 = ["middle right" if x1 <= x2 else "middle left" for x1, x2 in zip(a, b)]
-    fig.add_trace(go.Scatter(x=a, y=names, mode="markers+text", name="2023 실제 사유",
-                             marker=dict(size=18, color=C23), text=["%.1f" % v for v in a],
-                             textposition=pos23))
-    fig.add_trace(go.Scatter(x=b, y=names, mode="markers+text", name="2025 생각 이유",
-                             marker=dict(size=18, color=C25), text=["%.1f" % v for v in b],
-                             textposition=pos25))
-    fig.update_yaxes(autorange="reversed", showgrid=False)
-    top = float(max(a.max(), b.max()))
-    fig.update_xaxes(title=xt, range=[-top * 0.08, top * 1.15], gridcolor="#EEE")
-    return _base_layout(fig, "실제 중단 사유(2023)와 중단 생각 이유(2025): 대응 항목 비교",
-                        height=130 + 70 * len(names), legend=dict(orientation="h", y=1.12),
-                        margin=dict(l=20, r=20, t=90, b=40))
-
-
-def fig_q3_area(df, mapping, tier="기본", mode="원자료", sort_year="2025"):
-    m = match_table(df, mapping, tier).set_index("표시이름")
-    suffix = "값(%)" if mode == "원자료" else "상대비중(%)"
-    vals = m[[f"2023 {suffix}", f"2025 {suffix}"]].copy()
-    vals.columns = ["2023 실제 사유", "2025 생각 이유"]
-    ytitle = "원자료 비율(%)" if mode == "원자료" else "대응 항목 안 상대비중(%)"
-    return _ranked_area(vals, "실제 사유와 생각 이유의 대응 항목", ytitle,
-                        "2023 실제 사유" if sort_year == "2023" else "2025 생각 이유")
