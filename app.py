@@ -306,45 +306,66 @@ elif selected_tab == 1:
 elif selected_tab == 2:
     col_t3, col_bm3 = st.columns([10, 1])
     with col_t3:
-        st.subheader("Q③ 실제 중단 사유(2023) ↔ 중단 생각 이유(2025) 격차 비교")
+        st.subheader("Q③ 실제 중단 사유(2023) ↔ 중단 생각 이유(2025) 비교")
     with col_bm3:
         if st.button("⭐", key="bm_q3_top", help="이 섹션 북마크에 추가"):
             add_bookmark("Q③ 생각 vs 실제 비교 분석", 2)
+
+    group = "전체"
+    actual_group = ("전체", "소계")
+    thought_group = ("학교급별", "고등학교")
+    comparison_df = df
+    st.caption("2023년 실제 사유는 만 13~24세 학업중단 경험자, 2025년 생각 이유는 고등학생을 대상으로 합니다.")
+    st.caption("2023년 실제 사유의 전체 응답자는 33명입니다.")
+    actual_rank = st.radio("2023 실제 중단 사유의 순위 기준", ["1순위", "1+2순위", "1+2+3순위"], horizontal=True)
+    st.caption("2025 중단 생각 이유는 1순위 자료만 있습니다.")
 
     c_q3_ch, c_bm_q3 = st.columns([10, 1])
     with c_bm_q3:
         if st.button("⭐", key="bm_q3_chart", help="차트 북마크"):
             add_bookmark("Q③ 시각화 비교 차트", 2)
 
-    view = st.radio("표시 방식 선택", ["원자료 비율", "대응 항목 안 상대비중"], horizontal=True)
-    st.subheader("대응 항목별 비율")
     tier = "완화"
-    sort_year = "2025"
-    display_mode = "원자료" if view == "원자료 비율" else "상대"
+    sort_year = "2023"
     with c_q3_ch:
-        st.caption("각 연도 안에서 비율이 높은 항목부터 위에 표시합니다.")
-        fig = C.fig_q3_area(df, mapping, tier, display_mode, sort_year)
+        st.caption("각 연도에서 비율이 높은 항목부터 위에 표시합니다. 대응 선택지가 없는 항목은 해당 연도에만 표시합니다.")
+        fig = C.fig_q3_area(comparison_df, mapping, tier, "원자료", "2023", actual_rank, actual_group, thought_group)
         st.plotly_chart(fig, use_container_width=True)
+        if actual_rank != "1순위":
+            st.caption("2023년 누적 순위는 한 사람이 여러 사유를 꼽을 수 있어 항목별 비율의 합계가 100%를 넘습니다. 2025년과 순위 기준이 다릅니다.")
 
-    mt = C.match_table(df, mapping, tier).sort_values(
+    st.subheader("전체 항목별 비율")
+    mt = C.match_table(comparison_df, mapping, tier, actual_rank, actual_group, thought_group).sort_values(
         f"{sort_year} 값(%)", ascending=False, kind="stable")
+    actual_values = mt.loc[mt["항목_2023"].notna(), "2023 값(%)"]
+    if actual_values.isna().all():
+        st.warning(f"2023년 {group} 집단은 실제 중단 사유의 값이 제공되지 않습니다. 2025년 생각 이유만 표시합니다.")
+    elif actual_values.isna().any():
+        st.caption("2023년 실제 중단 사유의 일부 값은 원자료에서 제공되지 않아 ‘값 없음’으로 표시합니다.")
 
     item_colors = {trace.name: trace.fillcolor for trace in fig.data}
-    dark_colors = {"#4E79A7", "#E15759", "#59A14F", "#B07AA1", "#9C755F"}
-    correspondence = mt[["표시이름", "항목_2023", "항목_2025", "차이(%p)",
-                         "2023 순위", "2025 순위", "상대비중 차(%p)"]].copy()
-    correspondence["항목_2023"] = [f"{item} ({value:.1f}%)" for item, value in zip(mt["항목_2023"], mt["2023 값(%)"])]
-    correspondence["항목_2025"] = [f"{item} ({value:.1f}%)" for item, value in zip(mt["항목_2025"], mt["2025 값(%)"])]
+    columns = ["표시이름", "항목_2023", "항목_2025", "2023 순위", "2025 순위"]
+    if actual_rank == "1순위":
+        columns.append("차이(%p)")
+    correspondence = mt[columns].copy()
+    def item_label(item, value):
+        if pd.isna(item):
+            return "대응 선택지 없음"
+        return f"{item} ({value:.1f}%)" if pd.notna(value) else f"{item} (값 없음)"
+    correspondence["항목_2023"] = [item_label(item, value) for item, value in zip(mt["항목_2023"], mt["2023 값(%)"])]
+    correspondence["항목_2025"] = [item_label(item, value) for item, value in zip(mt["항목_2025"], mt["2025 값(%)"])]
     correspondence = correspondence.rename(
         columns={"표시이름": "대응 항목", "항목_2023": "2023 실제 중단 사유", "항목_2025": "2025 중단 생각 이유"})
     def correspondence_color(item):
-        color = item_colors[item]
-        text_color = "white" if color in dark_colors else "#202020"
-        return f"background-color: {color}; color: {text_color}"
-    styled = correspondence.style.map(correspondence_color, subset=["대응 항목"]).format(
-        {"차이(%p)": "{:.1f}", "상대비중 차(%p)": "{:.1f}"})
-    st.dataframe(styled,
-                 hide_index=True, use_container_width=True)
+        color = item_colors[C.short(item)]
+        return f"background-color: {color}; color: #111111"
+    def missing_color(value):
+        return "background-color: #eeeeee; color: #555555" if value == "대응 선택지 없음" or value.endswith("(값 없음)") else ""
+    styled = correspondence.style.map(correspondence_color, subset=["대응 항목"]).map(
+        missing_color, subset=["2023 실제 중단 사유", "2025 중단 생각 이유"]).format(
+        {"차이(%p)": "{:.1f}"} if actual_rank == "1순위" else {}, na_rep="—")
+    st.table(styled, hide_index=True, width="stretch")
     
     st.warning("두 조사는 연도·응답 대상·선택지 구성이 달라 '줄었다/늘었다'가 아니라 "
                "대응 항목의 순위와 비중의 방향만 비교합니다.")
+
